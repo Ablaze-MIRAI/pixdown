@@ -31,7 +31,7 @@ enum LayerContent {
 }
 
 #[derive(Debug, PartialEq)]
-enum LineContent {
+enum Token {
     Layer(usize),
     Frame(usize),
     Normal(String)
@@ -41,18 +41,18 @@ pub fn compile(s: &str) -> Vec<u8> {
     let data = parse_with_engine::<Config, Toml>(s).unwrap();
     let config = data.headers;
     let body = data.body;
-    let linecontent = body.lines().map(|c| parseline(c)).filter(|c| c != &LineContent::Normal("".to_string())).collect::<Vec<_>>();
+    let token = body.lines().map(|c| tokenize(c)).filter(|c| c != &Token::Normal("".to_string())).collect::<Vec<_>>();
     println!("{:#?}", config);
-    println!("{:#?}", linecontent);
+    println!("{:#?}", token);
     Vec::<u8>::new()
 }
 
-fn parseline(s: &str) -> LineContent {
+fn tokenize(s: &str) -> Token {
     if s.contains("## ") {
-        LineContent::Frame(s.split_at(3).1.parse::<usize>().unwrap())
+        Token::Frame(s.split_at(3).1.parse::<usize>().unwrap())
     } else if s.contains("# ") {
-        LineContent::Layer(s.split_at(2).1.parse::<usize>().unwrap())
+        Token::Layer(s.split_at(2).1.parse::<usize>().unwrap())
     } else {
-        LineContent::Normal(s.to_owned())
+        Token::Normal(s.to_owned())
     }
 }
