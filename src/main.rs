@@ -6,6 +6,7 @@ fn main() {
 w = 2
 h = 2
 scale = 256
+frames = 2
 
 [colors]
 "A" = "#000000"

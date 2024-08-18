@@ -10,23 +10,27 @@ struct Config {
 
 #[derive(Debug, Deserialize)]
 struct SizeConfig {
-    w: u64,
-    h: u64,
-    scale: u64
+    w: usize,
+    h: usize,
+    scale: usize,
+    frames: usize
 }
 
+#[derive(Debug)]
 struct Layer {
     index: usize,
     content: LayerContent
 }
 
+#[derive(Debug)]
 struct Frame {
     index: usize,
-    content: String
+    content: Vec<String>
 }
 
+#[derive(Debug)]
 enum LayerContent {
-    Still(String),
+    Still(Vec<String>),
     Video(Vec<Frame>)
 }
 
@@ -42,10 +46,63 @@ pub fn compile(s: &str) -> Vec<u8> {
     let config = data.headers;
     let body = data.body;
     let token = body.lines().map(|c| tokenize(c)).filter(|c| c != &Token::Normal("".to_string())).collect::<Vec<_>>();
+    let ast = parse(&token);
     println!("{:#?}", config);
-    println!("{:#?}", token);
+    println!("{:#?}", ast);
     Vec::<u8>::new()
 }
+
+fn parse(token: &[Token]) -> Vec<Layer> {
+    let mut i = 0usize;
+    let mut layers = Vec::<Layer>::new();
+    while i < token.len() {
+        while let Token::Layer(layern) = token[i] {
+            i += 1;
+            if let Token::Frame(_) = token[i] {
+                let mut frames = Vec::<Frame>::new();
+                while let Token::Frame(framen) = token[i]  {
+                    i += 1;
+                    let mut contents = Vec::<String>::new();
+                    while let Token::Normal(s) = &token[i] {
+                        contents.push(s.to_owned());
+                        i += 1;
+                        if i >= token.len() {
+                            break;
+                        }
+                    }
+                    frames.push(Frame {
+                        index: framen,
+                        content: contents
+                    });
+                    if i >= token.len() {
+                        break;
+                    }
+                }
+                layers.push(Layer {
+                    index: layern,
+                    content: LayerContent::Video(frames)
+                });
+            } else {
+                let mut contents = Vec::<String>::new();
+                while let Token::Normal(s) = &token[i] {
+                    contents.push(s.to_owned());
+                    i += 1;
+                    if i >= token.len() {
+                        break;
+                    }
+                }
+                layers.push(Layer {
+                    index: layern,
+                    content: LayerContent::Still(contents)
+                });
+            }
+            if i >= token.len() {
+                break;
+            }
+        }
+    }
+    layers
+} 
 
 fn tokenize(s: &str) -> Token {
     if s.contains("## ") {
