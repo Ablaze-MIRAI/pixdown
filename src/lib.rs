@@ -1,18 +1,19 @@
 use std::collections::HashMap;
-use fronma::{parser::parse_with_engine, engines::Toml};
+use fronma::{engines::Toml, parser::parse_with_engine};
 use serde::Deserialize;
 use regex::{Regex, Match};
 use itertools::Itertools;
 use num_rational::Rational64;
 use micro_png::{build_apng_u8, APNGBuilder, ImageData};
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Deserialize, Clone)]
 struct Config {
     size: SizeConfig,
     colors: HashMap<char, String>,
+    options: Option<Options>
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Deserialize, Clone)]
 struct SizeConfig {
     w: usize,
     h: usize,
@@ -21,36 +22,39 @@ struct SizeConfig {
     rate: Option<u16>
 }
 
-#[derive(Debug)]
+#[derive(Deserialize, Clone)]
+struct Options {
+    order: Option<Vec<usize>>
+}
+
 struct Layer {
     index: usize,
     content: LayerContent
 }
 
-#[derive(Debug)]
 struct Frame {
     index: usize,
     content: Vec<String>
 }
 
-#[derive(Debug)]
 enum LayerContent {
     Still(Vec<String>),
     Video(Vec<Frame>)
 }
 
-#[derive(Debug)]
 enum LayerPixmap { // (R, G, B, A)
     Still(Vec<Vec<(u8, u8, u8, u8)>>),
-    Video(Vec<Vec<Vec<(u8, u8, u8, u8)>>>),
+    Video(Frames),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 enum Token {
     Layer(usize),
     Frame(usize),
     Normal(String)
 }
+
+type Frames = Vec<Vec<Vec<(u8, u8, u8, u8)>>>;
 
 pub fn compile(s: &str) -> Result<Vec<u8>, String> {
     let data = parse_with_engine::<Config, Toml>(s).unwrap();
@@ -63,16 +67,30 @@ pub fn compile(s: &str) -> Result<Vec<u8>, String> {
     let layers = generate_layers(&config.clone(), ast);
     println!("Merging layers...");
     let frames = generate_frames(&config, layers);
+    println!("Applying options...");
+    let applyed = if let Some(option) = config.clone().options {
+        applyoption(frames, option)
+    } else {
+        frames
+    };
     println!("Scaling up...");
-    let scaled = scaleup(&config, frames);
+    let scaled = scaleup(&config, applyed);
     println!("Generating (A)PNG...");
     let builder = APNGBuilder::new("", ImageData::RGBA(scaled)).set_def_dur((1, config.size.rate.unwrap_or(24)));
     let result = build_apng_u8(builder);
     result
 }
 
-fn scaleup(conf: &Config, frames: Vec<Vec<Vec<(u8, u8, u8, u8)>>>) -> Vec<Vec<Vec<(u8, u8, u8, u8)>>> {
-    let mut result: Vec<Vec<Vec<(u8, u8, u8, u8)>>> = vec![];
+fn applyoption(frames: Frames, option: Options) -> Frames {
+    let mut result: Frames = frames;
+    if let Some(args) = option.order {
+        result = options::order(result, args);
+    }
+    result
+}
+
+fn scaleup(conf: &Config, frames: Frames) -> Frames {
+    let mut result: Frames = vec![];
     for f in &frames {
         let mut frame: Vec<Vec<(u8, u8, u8, u8)>> = vec![];
         for l in f {
@@ -83,8 +101,8 @@ fn scaleup(conf: &Config, frames: Vec<Vec<Vec<(u8, u8, u8, u8)>>>) -> Vec<Vec<Ve
     result
 }
 
-fn generate_frames(conf: &Config, layers: Vec<LayerPixmap>) -> Vec<Vec<Vec<(u8, u8, u8, u8)>>> {
-    let mut frames: Vec<Vec<Vec<(u8, u8, u8, u8)>>> = vec![];
+fn generate_frames(conf: &Config, layers: Vec<LayerPixmap>) -> Frames {
+    let mut frames: Frames = vec![];
     let mix = |cf: (u8, u8, u8, u8), cb: (Rational64, Rational64, Rational64, Rational64)| -> (Rational64, Rational64, Rational64, Rational64) {
         let c_f = (Rational64::new(cf.0 as i64, 1), Rational64::new(cf.1 as i64, 1), Rational64::new(cf.2 as i64, 1));
         let c_b = (cb.0, cb.1, cb.2);
@@ -131,7 +149,7 @@ fn generate_layers(conf: &Config, ast: Vec<Layer>) -> Vec<LayerPixmap> {
             layers.push(LayerPixmap::Still(pixmap));
         }
         if let LayerContent::Video(fs) = &l.content  {
-            let mut pixmaps: Vec<Vec<Vec<(u8, u8, u8, u8)>>> = vec![];
+            let mut pixmaps: Frames = vec![];
             for f in fs.iter().sorted_by_key(|c| c.index) {
                 let pixmap = f.content.iter().map(|c| c.chars().map(|d| to_rgba(conf.colors.get(&d).unwrap_or(&"#000000".to_string()).to_string())).collect::<Vec<_>>()).collect::<Vec<_>>();
                 pixmaps.push(pixmap);
@@ -228,5 +246,16 @@ fn tokenize(s: &str) -> Token {
         Token::Layer(s.split_at(2).1.parse::<usize>().unwrap())
     } else {
         Token::Normal(s.to_owned())
+    }
+}
+
+mod options {
+    use crate::Frames;
+    pub fn order(frames: Frames, order: Vec<usize>) -> Frames {
+        let mut result: Frames = vec![];
+        for &i in &order {
+            result.push((&frames)[i].clone());
+        }
+        result
     }
 }
