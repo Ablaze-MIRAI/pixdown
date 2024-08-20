@@ -23,7 +23,7 @@ rate = 4 # fps
 "0" = "#000000"
 "1" = "#ffffff"
 
-[[options]] # オプション(なくてもよい)
+[options] # オプション(なくてもよい)
 order = [1, 0, 1, 0, 0, 1, 0, 0] # 順序指定
 ```
 
@@ -42,7 +42,10 @@ order = [1, 0, 1, 0, 0, 1, 0, 0] # 順序指定
 
 `##`: フレーム番号
 
-### サンプル
+### 出力画像
+![出力画像](readme_files/image.png)
+
+## サンプル
 ![サンプル](example/example.png)
 
 [ソースコード](example/example.pixdown)
