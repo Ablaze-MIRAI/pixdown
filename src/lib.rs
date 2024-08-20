@@ -4,6 +4,7 @@ use serde::Deserialize;
 use regex::{Regex, Match};
 use itertools::Itertools;
 use num_rational::Rational64;
+use micro_png::{build_apng_u8, APNGBuilder, ImageData};
 
 #[derive(Debug, Deserialize, Clone)]
 struct Config {
@@ -16,7 +17,8 @@ struct SizeConfig {
     w: usize,
     h: usize,
     scale: usize,
-    frames: usize
+    frames: usize,
+    rate: Option<u16>
 }
 
 #[derive(Debug)]
@@ -39,8 +41,8 @@ enum LayerContent {
 
 #[derive(Debug)]
 enum LayerPixmap { // (R, G, B, A)
-    Still(Vec<(u8, u8, u8, u8)>),
-    Video(Vec<Vec<(u8, u8, u8, u8)>>),
+    Still(Vec<Vec<(u8, u8, u8, u8)>>),
+    Video(Vec<Vec<Vec<(u8, u8, u8, u8)>>>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -50,20 +52,39 @@ enum Token {
     Normal(String)
 }
 
-pub fn compile(s: &str) -> Vec<u8> {
+pub fn compile(s: &str) -> Result<Vec<u8>, String> {
     let data = parse_with_engine::<Config, Toml>(s).unwrap();
     let config = data.headers;
     let body = data.body;
+    println!("Parsing...");
     let token = body.lines().map(|c| tokenize(c)).filter(|c| c != &Token::Normal("".to_string())).collect::<Vec<_>>();
     let ast = parse(&token);
-    let frames = generate_frames(config.clone(), generate_layers(config.clone(), ast));
-    println!("{:#?}", config);
-    println!("{:#?}", frames);
-    Vec::<u8>::new()
+    println!("Putting color data...");
+    let layers = generate_layers(&config.clone(), ast);
+    println!("Merging layers...");
+    let frames = generate_frames(&config, layers);
+    println!("Scaling up...");
+    let scaled = scaleup(&config, frames);
+    println!("Generating (A)PNG...");
+    let builder = APNGBuilder::new("", ImageData::RGBA(scaled)).set_def_dur((1, config.size.rate.unwrap_or(24)));
+    let result = build_apng_u8(builder);
+    result
 }
 
-fn generate_frames(conf: Config, layers: Vec<LayerPixmap>) -> Vec<Vec<(u8, u8, u8, u8)>> {
-    let mut frames: Vec<Vec<(u8, u8, u8, u8)>> = vec![];
+fn scaleup(conf: &Config, frames: Vec<Vec<Vec<(u8, u8, u8, u8)>>>) -> Vec<Vec<Vec<(u8, u8, u8, u8)>>> {
+    let mut result: Vec<Vec<Vec<(u8, u8, u8, u8)>>> = vec![];
+    for f in &frames {
+        let mut frame: Vec<Vec<(u8, u8, u8, u8)>> = vec![];
+        for l in f {
+            frame.push(l.iter().map(|&c| vec![c; conf.size.scale]).concat());
+        }
+        result.push(frame.into_iter().map(|c| vec![c; conf.size.scale]).concat());
+    }
+    result
+}
+
+fn generate_frames(conf: &Config, layers: Vec<LayerPixmap>) -> Vec<Vec<Vec<(u8, u8, u8, u8)>>> {
+    let mut frames: Vec<Vec<Vec<(u8, u8, u8, u8)>>> = vec![];
     let mix = |cf: (u8, u8, u8, u8), cb: (Rational64, Rational64, Rational64, Rational64)| -> (Rational64, Rational64, Rational64, Rational64) {
         let c_f = (Rational64::new(cf.0 as i64, 1), Rational64::new(cf.1 as i64, 1), Rational64::new(cf.2 as i64, 1));
         let c_b = (cb.0, cb.1, cb.2);
@@ -77,48 +98,42 @@ fn generate_frames(conf: Config, layers: Vec<LayerPixmap>) -> Vec<Vec<(u8, u8, u
         (c.0, c.1, c.2, a * Rational64::new(255, 1))
     };
     for f in 0..conf.size.frames {
-        let mut frame = vec![(Rational64::new(0, 1), Rational64::new(0, 1), Rational64::new(0, 1), Rational64::new(0, 1)); conf.size.w * conf.size.h];
+        let mut frame = vec![vec![(Rational64::new(0, 1), Rational64::new(0, 1), Rational64::new(0, 1), Rational64::new(0, 1)); conf.size.w];conf.size.h];
         for l in layers.iter() {
             if let LayerPixmap::Still(v) = l {
-                v.iter().enumerate().for_each(|(i, &c)| {
-                    let b = frame[i % (conf.size.w * conf.size.h)];
-                    frame[i % (conf.size.w * conf.size.h)] = mix(c, b);
+                v.iter().enumerate().for_each(|(y, c)| {
+                    c.iter().enumerate().for_each(|(x, &d)| {
+                        let b = frame[y % conf.size.h][x % conf.size.w];
+                        frame[y % conf.size.h][x % conf.size.w] = mix(d, b);
+                    });
                 });
             }
             if let LayerPixmap::Video(vs) = l {
                 let v = vs[f % vs.len()].clone();
-                v.iter().enumerate().for_each(|(i, &c)| {
-                    let b = frame[i % (conf.size.w * conf.size.h)];
-                    frame[i % (conf.size.w * conf.size.h)] = mix(c, b);
+                v.iter().enumerate().for_each(|(y, c)| {
+                    c.iter().enumerate().for_each(|(x, &d)| {
+                        let b = frame[y % conf.size.h][x % conf.size.w];
+                        frame[y % conf.size.h][x % conf.size.w] = mix(d, b);
+                    });
                 });
             }
         }
-        frames.push(frame.into_iter().map(|c| (c.0.round().to_integer() as u8, c.1.round().to_integer() as u8, c.2.round().to_integer() as u8, c.3.round().to_integer() as u8)).collect::<Vec<_>>());
+        frames.push(frame.into_iter().map(|c| c.into_iter().map(|d| (d.0.to_integer() as u8, d.1.to_integer() as u8, d.2.to_integer() as u8, d.3.to_integer() as u8)).collect::<Vec<_>>()).collect::<Vec<_>>());
     }
     frames
 }
 
-fn generate_layers(conf: Config, ast: Vec<Layer>) -> Vec<LayerPixmap> {
+fn generate_layers(conf: &Config, ast: Vec<Layer>) -> Vec<LayerPixmap> {
     let mut layers: Vec<LayerPixmap> = vec![];
     for l in ast.iter().sorted_by_key(|c| c.index) {
         if let LayerContent::Still(s) = &l.content {
-            let mut pixmap: Vec<(u8, u8, u8, u8)> = vec![];
-            for line in s.iter() {
-                line.chars().for_each(|c| {
-                    pixmap.push(to_rgba(conf.colors.get(&c).unwrap_or(&"#000000".to_string()).to_string()));
-                });
-            }
+            let pixmap = s.iter().map(|c| c.chars().map(|d| to_rgba(conf.colors.get(&d).unwrap_or(&"#000000".to_string()).to_string())).collect::<Vec<_>>()).collect::<Vec<_>>();
             layers.push(LayerPixmap::Still(pixmap));
         }
         if let LayerContent::Video(fs) = &l.content  {
-            let mut pixmaps: Vec<Vec<(u8, u8, u8, u8)>> = vec![];
+            let mut pixmaps: Vec<Vec<Vec<(u8, u8, u8, u8)>>> = vec![];
             for f in fs.iter().sorted_by_key(|c| c.index) {
-                let mut pixmap: Vec<(u8, u8, u8, u8)> = vec![];
-                for line in f.content.iter() {
-                    line.chars().for_each(|c| {
-                        pixmap.push(to_rgba(conf.colors.get(&c).unwrap_or(&"#000000".to_string()).to_string()));
-                    });
-                }
+                let pixmap = f.content.iter().map(|c| c.chars().map(|d| to_rgba(conf.colors.get(&d).unwrap_or(&"#000000".to_string()).to_string())).collect::<Vec<_>>()).collect::<Vec<_>>();
                 pixmaps.push(pixmap);
             }
             layers.push(LayerPixmap::Video(pixmaps));

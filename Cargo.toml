@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 fronma = { version = "0.2.0", features = ["toml"] }
 itertools = "0.13.0"
+micro_png = "0.3.5"
 num-rational = "0.4.2"
 regex = "1.10.6"
 serde = { version = "1.0.203", features = ["derive"] }
