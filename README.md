@@ -83,7 +83,9 @@ npm i pixdown
 
 #### Use
 ```ts
-import { compile } from "pixdown";
+import init, { compile } from "pixdown";
+
+init();
 
 const imageuri = (text: string) => {
     let bin = compile(text);
