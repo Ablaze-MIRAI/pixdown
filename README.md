@@ -17,7 +17,7 @@ w = 2 # 幅
 h = 2 # 高さ
 scale = 256 # 拡大(縦, 横ともにscale倍)
 frames = 8 # フレームの数
-rate = 4 # fps
+rate = [1, 4] # フレーム間隔 ([0]/[1] s)
 
 [colors] # 色の定義
 "0" = "#000000"
@@ -50,7 +50,44 @@ order = [1, 0, 1, 0, 0, 1, 0, 0] # 順序指定
 
 [ソースコード](example/example.pixdown)
 
-## How to compile
+## How to use
+### Rust project
+#### Install
+```sh
+cargo add pixdown
+```
+
+#### Use
+```rust
+use pixdown::compile;
+
+fn main() {
+    let text = read_to_string("example.pixdown").unwrap();
+    if let Ok(b) = compile(&text) {
+        let mut file = File::create("image.png").unwrap();
+        file.write_all(&b).unwrap();
+        file.flush().unwrap();
+    }
+}
+```
+
+### Node project
+#### Install
+```sh
+npm i pixdown
+```
+
+#### Use
+```ts
+import { compile } from "pixdown";
+
+const imageuri = (text: string) => {
+    let bin = compile(text);
+    return `data:image/apng;base64,${btoa(String.fromCharCode(...bin))}`;
+};
+```
+
+## Demo
 リファレンス実装が動かせます
 ```sh
 cargo run -- [Pixdownファイル] [出力先]

@@ -4,7 +4,7 @@ w = 4
 h = 4
 scale = 128
 frames = 32
-rate = 32
+rate = [1, 32]
 
 [colors]
 "0" = "#00000000"
@@ -25,6 +25,10 @@ rate = 32
 "N" = "#3b0764"
 "O" = "#4a044e"
 "P" = "#500724"
+
+[meta]
+"Title" = "ゲーミングロード画面"
+"Auther" = "Bronya Zaychik"
 ---
 # 0
 ## 0

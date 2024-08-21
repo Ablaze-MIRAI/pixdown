@@ -4,13 +4,16 @@ use serde::Deserialize;
 use regex::{Regex, Match};
 use itertools::Itertools;
 use num_rational::Rational64;
-use micro_png::{build_apng_u8, APNGBuilder, ImageData};
+use wasm_bindgen::prelude::*;
+use crc32fast::hash;
+use deflate::{deflate_bytes_zlib_conf, Compression};
 
 #[derive(Deserialize, Clone)]
 struct Config {
     size: SizeConfig,
     colors: HashMap<char, String>,
-    options: Option<Options>
+    options: Option<Options>,
+    meta: Option<HashMap<String, String>>
 }
 
 #[derive(Deserialize, Clone)]
@@ -19,7 +22,7 @@ struct SizeConfig {
     h: usize,
     scale: usize,
     frames: usize,
-    rate: Option<u16>
+    rate: Option<[u16; 2]>
 }
 
 #[derive(Deserialize, Clone)]
@@ -56,28 +59,127 @@ enum Token {
 
 type Frames = Vec<Vec<Vec<(u8, u8, u8, u8)>>>;
 
+#[wasm_bindgen]
 pub fn compile(s: &str) -> Result<Vec<u8>, String> {
     let data = parse_with_engine::<Config, Toml>(s).unwrap();
     let config = data.headers;
     let body = data.body;
-    println!("Parsing...");
+    println!("[1/5] Parsing...");
     let token = body.lines().map(|c| tokenize(c)).filter(|c| c != &Token::Normal("".to_string())).collect::<Vec<_>>();
     let ast = parse(&token);
-    println!("Putting color data...");
+    println!("[2/5] Putting color data...");
     let layers = generate_layers(&config.clone(), ast);
-    println!("Merging layers...");
+    println!("[3/5] Merging layers...");
     let frames = generate_frames(&config, layers);
-    println!("Applying options...");
+    println!("[4/5] Applying options...");
     let applyed = if let Some(option) = config.clone().options {
         applyoption(frames, option)
     } else {
         frames
     };
-    println!("Scaling up...");
-    let scaled = scaleup(&config, applyed);
-    println!("Generating (A)PNG...");
-    let builder = APNGBuilder::new("", ImageData::RGBA(scaled)).set_def_dur((1, config.size.rate.unwrap_or(24)));
-    let result = build_apng_u8(builder);
+    print!("[5/5] Generating (A)PNG...");
+    let result = generate_image(&applyed, &config);
+    result
+}
+
+fn generate_image(frames: &Frames, conf: &Config) -> Result<Vec<u8>, String> {
+    let mut result: Vec<u8> = vec![];
+    if frames.is_empty() {
+        return Err("Image is empty".to_string());
+    }
+    if frames.len() != conf.size.frames {
+        return Err("Frame counts does not match.".to_string());
+    }
+    let heights = frames.iter().map(|c| c.len());
+    let widths = frames.iter().map(|c| c.iter().map(|d| d.len()).collect::<Vec<_>>()).concat();
+    if heights.clone().min().unwrap() == 0 {
+        return Err("Height is zero".to_string());
+    }
+    if widths.iter().min().unwrap() == &0 {
+        return Err("Width is zero".to_string());
+    }
+    if heights.clone().min().unwrap() != heights.max().unwrap() {
+        return Err("Unaligned heights.".to_string());
+    }
+    if widths.iter().min().unwrap() != widths.iter().max().unwrap() {
+        return Err("Unaligned widths.".to_string());
+    }
+    result.extend([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    { // IHDR
+        let mut ihdr: Vec<u8> = vec![];
+        ihdr.extend(b"IHDR");
+        ihdr.extend(((conf.size.w * conf.size.scale) as u32).to_be_bytes());
+        ihdr.extend(((conf.size.h * conf.size.scale) as u32).to_be_bytes());
+        ihdr.extend([0x08, 0x06, 0x00, 0x00, 0x00]);
+        result.extend(write_chunk(&ihdr));
+    }
+    result.extend(write_chunk(b"tEXtGenerator\x00Pixdown")); // tEXT
+    if let Some(meta) = conf.meta.clone() {
+        meta.iter().for_each(|(k, v)| {
+            let mut itxt: Vec<u8> = vec![];
+            itxt.extend(b"iTXt");
+            itxt.extend(k.as_bytes());
+            itxt.extend([0x00, 0x01, 0x00, 0x00, 0x00]); // [Null separator, Compression flag: true, Compression method: deflate-zlib, Null separator, Null separator]
+            itxt.extend(deflate_bytes_zlib_conf(&v.as_bytes(), Compression::Best));
+            result.extend(write_chunk(&itxt));
+        });
+    }
+    if conf.size.frames > 1 { // acTL
+        let mut actl: Vec<u8> = vec![];
+        actl.extend(b"acTL");
+        actl.extend((conf.size.frames as u32).to_be_bytes());
+        actl.extend([0x00, 0x00, 0x00, 0x00]);
+        result.extend(write_chunk(&actl));
+    }
+    let mut sequence = 0u32;
+    frames.iter().enumerate().for_each(|(f, fd)| {
+        if conf.size.frames > 1 { // fcTL
+            let mut fctl: Vec<u8> = vec![];
+            fctl.extend(b"fcTL");
+            fctl.extend(sequence.to_be_bytes());
+            sequence += 1;
+            fctl.extend(((conf.size.w * conf.size.scale) as u32).to_be_bytes());
+            fctl.extend(((conf.size.h * conf.size.scale) as u32).to_be_bytes());
+            fctl.extend(0u32.to_be_bytes());
+            fctl.extend(0u32.to_be_bytes());
+            let rate = conf.size.rate.unwrap_or([1, 24]);
+            fctl.extend(rate[0].to_be_bytes());
+            fctl.extend(if rate[1] == 0 { 24 } else {rate[1] }.to_be_bytes());
+            fctl.extend([0x00u8, 0x01u8]);
+            result.extend(write_chunk(&fctl));
+        }
+        let mut fdat: Vec<u8> = vec![]; // fdAT
+        let mut pixmap: Vec<u8> = vec![];
+        if f == 0 {
+            fdat.extend(b"IDAT");
+        } else {
+            fdat.extend(b"fdAT");
+            fdat.extend(sequence.to_be_bytes());
+            sequence += 1;
+        }
+        fd.iter().for_each(|yd| {
+            for _ in 0..conf.size.scale {
+                pixmap.push(0);
+                yd.iter().for_each(|xd| {
+                    for _ in 0..conf.size.scale {
+                        pixmap.extend([xd.0, xd.1, xd.2, xd.3]);
+                    }
+                });
+            }
+        });
+        fdat.extend(deflate_bytes_zlib_conf(&pixmap, Compression::Best));
+        result.extend(write_chunk(&fdat));
+        println!("Generated frame {}", f);
+    });
+    result.extend(write_chunk(b"IEND"));
+    Ok(result)
+}
+
+fn write_chunk(data: &[u8]) -> Vec<u8> {
+    let mut result: Vec<u8> = vec![];
+    result.extend((data.len() as u32 - 4).to_be_bytes());
+    result.extend(data);
+    result.extend(hash(data).to_be_bytes());
     result
 }
 
@@ -85,18 +187,6 @@ fn applyoption(frames: Frames, option: Options) -> Frames {
     let mut result: Frames = frames;
     if let Some(args) = option.order {
         result = options::order(result, args);
-    }
-    result
-}
-
-fn scaleup(conf: &Config, frames: Frames) -> Frames {
-    let mut result: Frames = vec![];
-    for f in &frames {
-        let mut frame: Vec<Vec<(u8, u8, u8, u8)>> = vec![];
-        for l in f {
-            frame.push(l.iter().map(|&c| vec![c; conf.size.scale]).concat());
-        }
-        result.push(frame.into_iter().map(|c| vec![c; conf.size.scale]).concat());
     }
     result
 }
