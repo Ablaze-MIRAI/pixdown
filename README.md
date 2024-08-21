@@ -1,4 +1,6 @@
 # Pixdown
+<img src="readme_files/pixdown.svg" style="width: 100%;" />
+
 ドットアニメーションに特化したラスタ画像軽量マークアップ言語
 
 ## How to write
