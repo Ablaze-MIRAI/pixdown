@@ -62,6 +62,8 @@ cargo add pixdown
 #### Use
 ```rust
 use pixdown::compile;
+use std::fs::{File, read_to_string};
+use std::io::Write;
 
 fn main() {
     let text = read_to_string("example.pixdown").unwrap();
