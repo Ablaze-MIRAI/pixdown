@@ -3,6 +3,8 @@
 
 ドットアニメーションに特化したラスタ画像軽量マークアップ言語
 
+![Crates.io Version](https://img.shields.io/crates/v/pixdown?style=flat&logo=rust)
+
 ## How to write
 Pixdownのデータ構造はヘッダーと内容の2つに分けられます
 ```
