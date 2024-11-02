@@ -75,24 +75,6 @@ fn main() {
 }
 ```
 
-### Node project
-#### Install
-```sh
-npm i pixdown
-```
-
-#### Use
-```ts
-import init, { compile } from "pixdown";
-
-init();
-
-const imageuri = (text: string) => {
-    let bin = compile(text);
-    return `data:image/apng;base64,${btoa(String.fromCharCode(...bin))}`;
-};
-```
-
 ## Demo
 リファレンス実装が動かせます
 ```sh
@@ -100,7 +82,7 @@ cargo run -- [Pixdownファイル] [出力先]
 ```
 
 ## Donation
-後で書く
+僕に寄付するくらいなら僕の曲聴いてほしい
 
 ## License
 [BRONSEELE-WARE LICENSE](LICENSE.md)で公開しています
