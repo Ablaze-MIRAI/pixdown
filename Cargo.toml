@@ -3,7 +3,9 @@ name = "pixdown"
 version = "0.1.0"
 license-file = "LICENSE.md"
 edition = "2021"
-repository = "https://github.com/mct-joken/pixdown"
+repository = "https://github.com/Nakanoin19/pixdown"
+keywords = ["image", "markup-language", "generator", "compiler", "png", "apng"]
+description = "Markup language for Pixelart and animation"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
