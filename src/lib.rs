@@ -66,7 +66,7 @@ pub fn compile(s: &str) -> Result<Vec<u8>, String> {
     let body = data.body;
     println!("[1/5] Parsing...");
     let token = body.lines().map(|c| tokenize(c)).filter(|c| c != &Token::Normal("".to_string())).collect::<Vec<_>>();
-    let ast = parse(&token);
+    let ast = parse(token);
     println!("[2/5] Putting color data...");
     let layers = generate_layers(&config.clone(), ast);
     println!("[3/5] Merging layers...");
@@ -77,12 +77,13 @@ pub fn compile(s: &str) -> Result<Vec<u8>, String> {
     } else {
         frames
     };
-    print!("[5/5] Generating (A)PNG...");
-    let result = generate_image(&applyed, &config);
+    println!("[5/5] Generating (A)PNG...");
+    let result = generate_image(applyed, &config);
     result
 }
 
-fn generate_image(frames: &Frames, conf: &Config) -> Result<Vec<u8>, String> {
+fn generate_image(frames_r: Frames, conf: &Config) -> Result<Vec<u8>, String> {
+    let frames = &frames_r;
     let mut result: Vec<u8> = vec![];
     if frames.is_empty() {
         return Err("Image is empty".to_string());
@@ -148,27 +149,31 @@ fn generate_image(frames: &Frames, conf: &Config) -> Result<Vec<u8>, String> {
             fctl.extend([0x00u8, 0x01u8]);
             result.extend(write_chunk(&fctl));
         }
-        let mut fdat: Vec<u8> = vec![]; // fdAT
-        let mut pixmap: Vec<u8> = vec![];
-        if f == 0 {
-            fdat.extend(b"IDAT");
-        } else {
-            fdat.extend(b"fdAT");
-            fdat.extend(sequence.to_be_bytes());
-            sequence += 1;
-        }
-        fd.iter().for_each(|yd| {
-            for _ in 0..conf.size.scale {
-                pixmap.push(0);
-                yd.iter().for_each(|xd| {
+        {
+            let mut fdat: Vec<u8> = vec![]; // fdAT
+            {
+                let mut pixmap: Vec<u8> = vec![];
+                if f == 0 {
+                    fdat.extend(b"IDAT");
+                } else {
+                    fdat.extend(b"fdAT");
+                    fdat.extend(sequence.to_be_bytes());
+                    sequence += 1;
+                }
+                fd.iter().for_each(|yd| {
                     for _ in 0..conf.size.scale {
-                        pixmap.extend([xd.0, xd.1, xd.2, xd.3]);
+                        pixmap.push(0);
+                        yd.iter().for_each(|xd| {
+                            for _ in 0..conf.size.scale {
+                                pixmap.extend([xd.0, xd.1, xd.2, xd.3]);
+                            }
+                        });
                     }
                 });
+                fdat.extend(deflate_bytes_zlib_conf(&pixmap, Compression::Best));
             }
-        });
-        fdat.extend(deflate_bytes_zlib_conf(&pixmap, Compression::Best));
-        result.extend(write_chunk(&fdat));
+            result.extend(write_chunk(&fdat));
+        }
         println!("Generated frame {}", f);
     });
     result.extend(write_chunk(b"IEND"));
@@ -200,9 +205,7 @@ fn generate_frames(conf: &Config, layers: Vec<LayerPixmap>) -> Frames {
         let a_f = Rational64::new(cf.3 as i64, 255);
         let a_b = cb.3 / Rational64::new(255, 1);
         let a = a_f * a_b + a_f * (one - a_b) + (one - a_f) * a_b;
-        let k_f = a_f * a_b + a_f * (one - a_b);
-        let k_b = (one - a_f) * (one - a_b) + (one - a_f) * a_b;
-        let c = (k_f * c_f.0 + k_b * c_b.0, k_f * c_f.1 + k_b * c_b.1, k_f * c_f.2 + k_b * c_b.2);
+        let c = (a_f * c_f.0 + (one - a_f) * c_b.0, a_f * c_f.1 + (one - a_f) * c_b.1, a_f * c_f.2 + (one - a_f) * c_b.2);
         (c.0, c.1, c.2, a * Rational64::new(255, 1))
     };
     for f in 0..conf.size.frames {
@@ -277,7 +280,8 @@ fn to_rgba(hex: String) -> (u8, u8, u8, u8) {
     )
 }
 
-fn parse(token: &[Token]) -> Vec<Layer> {
+fn parse(token_r: Vec<Token>) -> Vec<Layer> {
+    let token = &token_r;
     let mut i = 0usize;
     let mut layers = Vec::<Layer>::new();
     while i < token.len() {

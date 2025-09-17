@@ -84,7 +84,9 @@ cargo run -- [Pixdownファイル] [出力先]
 ```
 
 ## Donation
-僕に寄付するくらいなら僕の曲聴いてほしい
+私に寄付するくらいなら私のファンアートを描くか私の曲を聴くかしてください
+
+それでも寄付したい人はAblazeに寄付してあげてください
 
 ## License
-[BRONSEELE-WARE LICENSE](LICENSE.md)で公開しています
+[Rion Hobby License](LICENSE)で公開しています
