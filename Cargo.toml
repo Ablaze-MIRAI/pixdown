@@ -1,6 +1,6 @@
 [package]
 name = "pixdown"
-version = "0.1.1"
+version = "0.1.2"
 license = "ISC"
 edition = "2021"
 repository = "https://github.com/Nakanoin19/pixdown"
@@ -15,7 +15,7 @@ crc32fast = "1.4.2"
 deflate = "1.0.0"
 fronma = { version = "0.2.0", features = ["toml"] }
 itertools = "0.13.0"
-num-rational = "0.4.2"
 regex = "1.10.6"
 serde = { version = "1.0.203", features = ["derive"] }
 wasm-bindgen = "0.2.93"
+wide = "1.2.0"

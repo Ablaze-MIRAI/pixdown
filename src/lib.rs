@@ -3,7 +3,7 @@ use fronma::{engines::Toml, parser::parse_with_engine};
 use serde::Deserialize;
 use regex::{Regex, Match};
 use itertools::Itertools;
-use num_rational::Rational64;
+use wide::f64x4;
 use wasm_bindgen::prelude::*;
 use crc32fast::hash;
 use deflate::{deflate_bytes_zlib_conf, Compression};
@@ -198,18 +198,25 @@ fn applyoption(frames: Frames, option: Options) -> Frames {
 
 fn generate_frames(conf: &Config, layers: Vec<LayerPixmap>) -> Frames {
     let mut frames: Frames = vec![];
-    let mix = |cf: (u8, u8, u8, u8), cb: (Rational64, Rational64, Rational64, Rational64)| -> (Rational64, Rational64, Rational64, Rational64) {
-        let c_f = (Rational64::new(cf.0 as i64, 1), Rational64::new(cf.1 as i64, 1), Rational64::new(cf.2 as i64, 1));
-        let c_b = (cb.0, cb.1, cb.2);
-        let one = Rational64::new(1, 1);
-        let a_f = Rational64::new(cf.3 as i64, 255);
-        let a_b = cb.3 / Rational64::new(255, 1);
-        let a = a_f * a_b + a_f * (one - a_b) + (one - a_f) * a_b;
-        let c = (a_f * c_f.0 + (one - a_f) * c_b.0, a_f * c_f.1 + (one - a_f) * c_b.1, a_f * c_f.2 + (one - a_f) * c_b.2);
-        (c.0, c.1, c.2, a * Rational64::new(255, 1))
+    let mix = |lf: (u8, u8, u8, u8), lb: (f64, f64, f64, f64)| -> (f64, f64, f64, f64) {
+        let cf = f64x4::from([lf.0 as f64, lf.1 as f64, lf.2 as f64, 0.0f64]);
+        let cb = f64x4::from([lb.0, lb.1, lb.2, 0.0f64]);
+        let af = f64x4::splat(lf.3 as f64 / 255.0);
+        let ab = f64x4::splat(lb.3 / 255.0);
+        let one = f64x4::splat(1.0);
+        let c_f = cf * af;
+        let c_b = cb * ab;
+        let a = af + ab * (one - af);
+        let c_ = c_f + c_b * (one - af);
+        let c = if a == f64x4::splat(0.0) {
+            f64x4::splat(0.0)
+        } else {
+            (c_ / a).max(f64x4::splat(0.0)).min(f64x4::splat(255.0))
+        }.to_array();
+        (c[0], c[1], c[2], a.to_array()[0] * 255.0)
     };
     for f in 0..conf.size.frames {
-        let mut frame = vec![vec![(Rational64::new(0, 1), Rational64::new(0, 1), Rational64::new(0, 1), Rational64::new(0, 1)); conf.size.w];conf.size.h];
+        let mut frame = vec![vec![(0.0f64, 0.0f64, 0.0f64, 0.0f64); conf.size.w];conf.size.h];
         for l in layers.iter() {
             if let LayerPixmap::Still(v) = l {
                 v.iter().enumerate().for_each(|(y, c)| {
@@ -229,7 +236,7 @@ fn generate_frames(conf: &Config, layers: Vec<LayerPixmap>) -> Frames {
                 });
             }
         }
-        frames.push(frame.into_iter().map(|c| c.into_iter().map(|d| (d.0.to_integer() as u8, d.1.to_integer() as u8, d.2.to_integer() as u8, d.3.to_integer() as u8)).collect::<Vec<_>>()).collect::<Vec<_>>());
+        frames.push(frame.into_iter().map(|c| c.into_iter().map(|d| (d.0 as u8, d.1 as u8, d.2 as u8, d.3 as u8)).collect::<Vec<_>>()).collect::<Vec<_>>());
     }
     frames
 }
@@ -331,7 +338,7 @@ fn parse(token_r: Vec<Token>) -> Vec<Layer> {
         }
     }
     layers
-} 
+}
 
 fn tokenize(s: &str) -> Token {
     if s.contains("## ") {
