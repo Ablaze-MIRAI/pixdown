@@ -1,7 +1,7 @@
+use pixdown::compile;
 use std::env::args;
 use std::fs::{File, read_to_string};
 use std::io::Write;
-use pixdown::compile;
 
 fn main() {
     let args = args().collect::<Vec<String>>();

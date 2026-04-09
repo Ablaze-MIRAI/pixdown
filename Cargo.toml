@@ -2,7 +2,7 @@
 name = "pixdown"
 version = "0.1.2"
 license = "ISC"
-edition = "2021"
+edition = "2024"
 repository = "https://github.com/Nakanoin19/pixdown"
 keywords = ["image", "markup-language", "png", "apng"]
 description = "Markup language for Pixelart and animation"

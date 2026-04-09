@@ -1,19 +1,20 @@
-use std::collections::HashMap;
-use fronma::{engines::Toml, parser::parse_with_engine};
-use serde::Deserialize;
-use regex::{Regex, Match};
-use itertools::Itertools;
-use wide::f64x4;
-use wasm_bindgen::prelude::*;
 use crc32fast::hash;
-use deflate::{deflate_bytes_zlib_conf, Compression};
+use deflate::{Compression, deflate_bytes_zlib_conf};
+use fronma::{engines::Toml, parser::parse_with_engine};
+use itertools::Itertools;
+use regex::Regex;
+use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::LazyLock;
+use wasm_bindgen::prelude::*;
+use wide::f64x4;
 
 #[derive(Deserialize, Clone)]
 struct Config {
     size: SizeConfig,
     colors: HashMap<char, String>,
     options: Option<Options>,
-    meta: Option<HashMap<String, String>>
+    meta: Option<HashMap<String, String>>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -22,30 +23,31 @@ struct SizeConfig {
     h: usize,
     scale: usize,
     frames: usize,
-    rate: Option<[u16; 2]>
+    rate: Option<[u16; 2]>,
 }
 
 #[derive(Deserialize, Clone)]
 struct Options {
-    order: Option<Vec<usize>>
+    order: Option<Vec<usize>>,
 }
 
 struct Layer {
     index: usize,
-    content: LayerContent
+    content: LayerContent,
 }
 
 struct Frame {
     index: usize,
-    content: Vec<String>
+    content: Vec<String>,
 }
 
 enum LayerContent {
     Still(Vec<String>),
-    Video(Vec<Frame>)
+    Video(Vec<Frame>),
 }
 
-enum LayerPixmap { // (R, G, B, A)
+enum LayerPixmap {
+    // (R, G, B, A)
     Still(Vec<Vec<(u8, u8, u8, u8)>>),
     Video(Frames),
 }
@@ -54,7 +56,7 @@ enum LayerPixmap { // (R, G, B, A)
 enum Token {
     Layer(usize),
     Frame(usize),
-    Normal(String)
+    Normal(String),
 }
 
 type Frames = Vec<Vec<Vec<(u8, u8, u8, u8)>>>;
@@ -65,7 +67,11 @@ pub fn compile(s: &str) -> Result<Vec<u8>, String> {
     let config = data.headers;
     let body = data.body;
     println!("[1/5] Parsing...");
-    let token = body.lines().map(|c| tokenize(c)).filter(|c| c != &Token::Normal("".to_string())).collect::<Vec<_>>();
+    let token = body
+        .lines()
+        .map(|c| tokenize(c))
+        .filter(|c| c != &Token::Normal("".to_string()))
+        .collect::<Vec<_>>();
     let ast = parse(token);
     println!("[2/5] Putting color data...");
     let layers = generate_layers(&config.clone(), ast);
@@ -92,7 +98,10 @@ fn generate_image(frames_r: Frames, conf: &Config) -> Result<Vec<u8>, String> {
         return Err("Frame counts does not match.".to_string());
     }
     let heights = frames.iter().map(|c| c.len());
-    let widths = frames.iter().map(|c| c.iter().map(|d| d.len()).collect::<Vec<_>>()).concat();
+    let widths = frames
+        .iter()
+        .map(|c| c.iter().map(|d| d.len()).collect::<Vec<_>>())
+        .concat();
     if heights.clone().min().unwrap() == 0 {
         return Err("Height is zero".to_string());
     }
@@ -106,7 +115,8 @@ fn generate_image(frames_r: Frames, conf: &Config) -> Result<Vec<u8>, String> {
         return Err("Unaligned widths.".to_string());
     }
     result.extend([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-    { // IHDR
+    {
+        // IHDR
         let mut ihdr: Vec<u8> = vec![];
         ihdr.extend(b"IHDR");
         ihdr.extend(((conf.size.w * conf.size.scale) as u32).to_be_bytes());
@@ -125,7 +135,8 @@ fn generate_image(frames_r: Frames, conf: &Config) -> Result<Vec<u8>, String> {
             result.extend(write_chunk(&itxt));
         });
     }
-    if conf.size.frames > 1 { // acTL
+    if conf.size.frames > 1 {
+        // acTL
         let mut actl: Vec<u8> = vec![];
         actl.extend(b"acTL");
         actl.extend((conf.size.frames as u32).to_be_bytes());
@@ -134,7 +145,8 @@ fn generate_image(frames_r: Frames, conf: &Config) -> Result<Vec<u8>, String> {
     }
     let mut sequence = 0u32;
     frames.iter().enumerate().for_each(|(f, fd)| {
-        if conf.size.frames > 1 { // fcTL
+        if conf.size.frames > 1 {
+            // fcTL
             let mut fctl: Vec<u8> = vec![];
             fctl.extend(b"fcTL");
             fctl.extend(sequence.to_be_bytes());
@@ -145,7 +157,7 @@ fn generate_image(frames_r: Frames, conf: &Config) -> Result<Vec<u8>, String> {
             fctl.extend(0u32.to_be_bytes());
             let rate = conf.size.rate.unwrap_or([1, 24]);
             fctl.extend(rate[0].to_be_bytes());
-            fctl.extend(if rate[1] == 0 { 24 } else {rate[1] }.to_be_bytes());
+            fctl.extend(if rate[1] == 0 { 24 } else { rate[1] }.to_be_bytes());
             fctl.extend([0x00u8, 0x01u8]);
             result.extend(write_chunk(&fctl));
         }
@@ -212,11 +224,12 @@ fn generate_frames(conf: &Config, layers: Vec<LayerPixmap>) -> Frames {
             f64x4::splat(0.0)
         } else {
             (c_ / a).max(f64x4::splat(0.0)).min(f64x4::splat(255.0))
-        }.to_array();
+        }
+        .to_array();
         (c[0], c[1], c[2], a.to_array()[0] * 255.0)
     };
     for f in 0..conf.size.frames {
-        let mut frame = vec![vec![(0.0f64, 0.0f64, 0.0f64, 0.0f64); conf.size.w];conf.size.h];
+        let mut frame = vec![vec![(0.0f64, 0.0f64, 0.0f64, 0.0f64); conf.size.w]; conf.size.h];
         for l in layers.iter() {
             if let LayerPixmap::Still(v) = l {
                 v.iter().enumerate().for_each(|(y, c)| {
@@ -236,7 +249,16 @@ fn generate_frames(conf: &Config, layers: Vec<LayerPixmap>) -> Frames {
                 });
             }
         }
-        frames.push(frame.into_iter().map(|c| c.into_iter().map(|d| (d.0 as u8, d.1 as u8, d.2 as u8, d.3 as u8)).collect::<Vec<_>>()).collect::<Vec<_>>());
+        frames.push(
+            frame
+                .into_iter()
+                .map(|c| {
+                    c.into_iter()
+                        .map(|d| (d.0 as u8, d.1 as u8, d.2 as u8, d.3 as u8))
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>(),
+        );
     }
     frames
 }
@@ -245,13 +267,42 @@ fn generate_layers(conf: &Config, ast: Vec<Layer>) -> Vec<LayerPixmap> {
     let mut layers: Vec<LayerPixmap> = vec![];
     for l in ast.iter().sorted_by_key(|c| c.index) {
         if let LayerContent::Still(s) = &l.content {
-            let pixmap = s.iter().map(|c| c.chars().map(|d| to_rgba(conf.colors.get(&d).unwrap_or(&"#000000".to_string()).to_string())).collect::<Vec<_>>()).collect::<Vec<_>>();
+            let pixmap = s
+                .iter()
+                .map(|c| {
+                    c.chars()
+                        .map(|d| {
+                            to_rgba(
+                                conf.colors
+                                    .get(&d)
+                                    .unwrap_or(&"#000000".to_string())
+                                    .to_string(),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
             layers.push(LayerPixmap::Still(pixmap));
         }
-        if let LayerContent::Video(fs) = &l.content  {
+        if let LayerContent::Video(fs) = &l.content {
             let mut pixmaps: Frames = vec![];
             for f in fs.iter().sorted_by_key(|c| c.index) {
-                let pixmap = f.content.iter().map(|c| c.chars().map(|d| to_rgba(conf.colors.get(&d).unwrap_or(&"#000000".to_string()).to_string())).collect::<Vec<_>>()).collect::<Vec<_>>();
+                let pixmap = f
+                    .content
+                    .iter()
+                    .map(|c| {
+                        c.chars()
+                            .map(|d| {
+                                to_rgba(
+                                    conf.colors
+                                        .get(&d)
+                                        .unwrap_or(&"#000000".to_string())
+                                        .to_string(),
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
                 pixmaps.push(pixmap);
             }
             layers.push(LayerPixmap::Video(pixmaps));
@@ -260,31 +311,22 @@ fn generate_layers(conf: &Config, ast: Vec<Layer>) -> Vec<LayerPixmap> {
     layers
 }
 
-fn to_rgba(hex: String) -> (u8, u8, u8, u8) {
-    let unwrapstr = |r: Option<Match>| -> String {
-        if let Some(m) = r {
-            m.as_str().to_string()
-        } else {
-            "00".to_string()
-        }
-    };
-    let unwrapstr_or = |r: Option<Match>, e: &str| -> String {
-        if let Some(m) = r {
-            m.as_str().to_string()
-        } else {
-            e.to_string()
-        }
-    };
-    let rgba_p = Regex::new(r"^#(?<r>[0-9a-fA-F]{2})(?<g>[0-9a-fA-F]{2})(?<b>[0-9a-fA-F]{2})(?<a>[0-9a-fA-F]{2})?$").unwrap();
-    let caps = rgba_p.captures(&hex).unwrap();
-    let result_m = (caps.name("r"), caps.name("g"), caps.name("b"), caps.name("a"));
-    let result_s = (&unwrapstr(result_m.0), &unwrapstr(result_m.1), &unwrapstr(result_m.2), &unwrapstr_or(result_m.3, "FF"));
-    (
-        u8::from_str_radix(result_s.0, 16).unwrap(),
-        u8::from_str_radix(result_s.1, 16).unwrap(),
-        u8::from_str_radix(result_s.2, 16).unwrap(),
-        u8::from_str_radix(result_s.3, 16).unwrap()
+static RGBA_P: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^#(?<r>[0-9a-fA-F]{2})(?<g>[0-9a-fA-F]{2})(?<b>[0-9a-fA-F]{2})(?<a>[0-9a-fA-F]{2})?$"
     )
+    .unwrap()
+});
+fn to_rgba(hex: String) -> (u8, u8, u8, u8) {
+    let caps = RGBA_P.captures(&hex).unwrap();
+    let r = u8::from_str_radix(caps.name("r").unwrap().as_str(), 16).unwrap_or(0);
+    let g = u8::from_str_radix(caps.name("g").unwrap().as_str(), 16).unwrap_or(0);
+    let b = u8::from_str_radix(caps.name("b").unwrap().as_str(), 16).unwrap_or(0);
+    let a = match caps.name("a") {
+        Some(am) => u8::from_str_radix(am.as_str(), 16).unwrap_or(255),
+        None => 255,
+    };
+    (r, g, b, a)
 }
 
 fn parse(token_r: Vec<Token>) -> Vec<Layer> {
@@ -296,7 +338,7 @@ fn parse(token_r: Vec<Token>) -> Vec<Layer> {
             i += 1;
             if let Token::Frame(_) = token[i] {
                 let mut frames = Vec::<Frame>::new();
-                while let Token::Frame(framen) = token[i]  {
+                while let Token::Frame(framen) = token[i] {
                     i += 1;
                     let mut contents = Vec::<String>::new();
                     while let Token::Normal(s) = &token[i] {
@@ -308,7 +350,7 @@ fn parse(token_r: Vec<Token>) -> Vec<Layer> {
                     }
                     frames.push(Frame {
                         index: framen,
-                        content: contents
+                        content: contents,
                     });
                     if i >= token.len() {
                         break;
@@ -316,7 +358,7 @@ fn parse(token_r: Vec<Token>) -> Vec<Layer> {
                 }
                 layers.push(Layer {
                     index: layern,
-                    content: LayerContent::Video(frames)
+                    content: LayerContent::Video(frames),
                 });
             } else {
                 let mut contents = Vec::<String>::new();
@@ -329,7 +371,7 @@ fn parse(token_r: Vec<Token>) -> Vec<Layer> {
                 }
                 layers.push(Layer {
                     index: layern,
-                    content: LayerContent::Still(contents)
+                    content: LayerContent::Still(contents),
                 });
             }
             if i >= token.len() {
@@ -340,11 +382,13 @@ fn parse(token_r: Vec<Token>) -> Vec<Layer> {
     layers
 }
 
+static LAYER_P: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^# (\d+)$").unwrap());
+static FRAME_P: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^## (\d+)$").unwrap());
 fn tokenize(s: &str) -> Token {
-    if s.contains("## ") {
-        Token::Frame(s.split_at(3).1.parse::<usize>().unwrap())
-    } else if s.contains("# ") {
-        Token::Layer(s.split_at(2).1.parse::<usize>().unwrap())
+    if let Some(caps) = LAYER_P.captures(s) {
+        Token::Layer(caps.get(1).unwrap().as_str().parse::<usize>().unwrap())
+    } else if let Some(caps) = FRAME_P.captures(s) {
+        Token::Frame(caps.get(1).unwrap().as_str().parse::<usize>().unwrap())
     } else {
         Token::Normal(s.to_owned())
     }
