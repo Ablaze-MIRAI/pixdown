@@ -86,5 +86,7 @@ cargo run -- [Pixdownファイル] [出力先]
 ## Donation
 Ablazeに寄付してあげてください
 
+一応中院個人のやつもあるけどまあそれするならAblazeに送ったほうが何倍もいいよ
+
 ## License
 [Rion Hobby License](LICENSE)で公開しています
